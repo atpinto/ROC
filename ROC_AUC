@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ROC Curve Builder from Diagnostic Test Cutoffs</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #d1d5db;
+    --blue: #2563eb;
+    --green: #16a34a;
+    --red: #dc2626;
+    --orange: #f97316;
+    --purple: #7c3aed;
+  }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  header {
+    background: #111827;
+    color: white;
+    padding: 18px 28px;
+  }
+
+  header h1 {
+    margin: 0;
+    font-size: 1.55rem;
+  }
+
+  header p {
+    margin: 6px 0 0;
+    color: #d1d5db;
+  }
+
+  .container {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 20px;
+    padding: 20px;
+  }
+
+  .panel {
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+
+  .control {
+    margin-bottom: 22px;
+  }
+
+  label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  input[type="range"] {
+    width: 100%;
+  }
+
+  .value {
+    color: var(--blue);
+    font-weight: 800;
+  }
+
+  button {
+    border: none;
+    border-radius: 9px;
+    padding: 10px 12px;
+    margin: 4px 4px 8px 0;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .primary {
+    background: var(--blue);
+    color: white;
+  }
+
+  .secondary {
+    background: #e5e7eb;
+    color: #111827;
+  }
+
+  .danger {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 20px;
+  }
+
+  canvas {
+    width: 100%;
+    max-height: 420px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 0.92rem;
+  }
+
+  th, td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+
+  th {
+    background: #f3f4f6;
+  }
+
+  .note {
+    color: var(--muted);
+    line-height: 1.45;
+    font-size: 0.95rem;
+  }
+
+  .stat-boxes {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .stat-box {
+    background: #f9fafb;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+  }
+
+  .stat-box .label {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  .stat-box .number {
+    font-size: 1.3rem;
+    font-weight: 800;
+    margin-top: 4px;
+  }
+
+  .legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 12px;
+    font-size: 0.9rem;
+  }
+
+  .legend span {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  .tp { background: var(--green); }
+  .fn { background: var(--orange); }
+  .tn { background: var(--blue); }
+  .fp { background: var(--red); }
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>Diagnostic test cutoff and ROC curve builder</h1>
+  <p>Move the cutoff, add cutoffs, and watch the ROC curve being generated.</p>
+</header>
+
+<div class="container">
+
+  <aside class="panel">
+
+    <div class="control">
+      <label for="cutoff">
+        Cutoff:
+        <span id="cutoffValue" class="value"></span>
+      </label>
+      <input type="range" id="cutoff" min="0" max="100" step="1" value="50">
+    </div>
+
+    <div class="control">
+      <label for="separation">
+        Difference between groups:
+        <span id="separationValue" class="value"></span>
+      </label>
+      <input type="range" id="separation" min="5" max="45" step="1" value="25">
+    </div>
+
+    <div class="control">
+      <label for="sd">
+        Within-group variability:
+        <span id="sdValue" class="value"></span>
+      </label>
+      <input type="range" id="sd" min="5" max="25" step="1" value="15">
+    </div>
+
+    <button class="primary" id="addCutoffButton">Add this cutoff to ROC</button>
+    <button class="secondary" id="addManyButton">Add many cutoffs</button>
+    <button class="danger" id="clearCutoffsButton">Clear ROC points</button>
+    <button class="secondary" id="newDataButton">New simulated data</button>
+
+    <div class="legend">
+      <div><span class="tp"></span>True positive</div>
+      <div><span class="fn"></span>False negative</div>
+      <div><span class="tn"></span>True negative</div>
+      <div><span class="fp"></span>False positive</div>
+    </div>
+
+    <div class="note">
+      <p>
+        The diagnostic values are fixed while you move the cutoff.
+        Only the classification changes.
+      </p>
+      <p>
+        When you add a cutoff, its sensitivity and false positive rate are added as one point on the ROC plot.
+      </p>
+    </div>
+
+  </aside>
+
+  <main class="grid">
+
+    <section class="panel">
+      <h2>Continuous diagnostic-test scale</h2>
+      <canvas id="scaleChart"></canvas>
+
+      <div class="stat-boxes">
+        <div class="stat-box">
+          <div class="label">Sensitivity</div>
+          <div class="number" id="sensitivityBox"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Specificity</div>
+          <div class="number" id="specificityBox"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">False positive rate</div>
+          <div class="number" id="fprBox"></div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Added ROC points</div>
+          <div class="number" id="rocPointsBox"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="two-col">
+
+      <div class="panel">
+        <h2>ROC curve built from selected cutoffs</h2>
+        <canvas id="rocChart"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>Cutoffs added</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Cutoff</th>
+              <th>Sensitivity</th>
+              <th>Specificity</th>
+              <th>FPR</th>
+            </tr>
+          </thead>
+          <tbody id="cutoffTableBody"></tbody>
+        </table>
+
+        <div class="note">
+          <p>
+            ROC x-axis: false positive rate = 1 − specificity.
+          </p>
+          <p>
+            ROC y-axis: sensitivity.
+          </p>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+</div>
+
+<script>
+let scaleChart;
+let rocChart;
+
+let data = [];
+let selectedCutoffs = [];
+let seed = 12345;
+
+const nPerGroup = 100;
+
+function random() {
+  seed = (seed * 16807) % 2147483647;
+  return (seed - 1) / 2147483646;
+}
+
+function normalRandom(mean, sd) {
+  let u1 = random();
+  let u2 = random();
+
+  if (u1 <= 0) u1 = 0.0001;
+
+  let z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+
+  return mean + sd * z;
+}
+
+function clamp(x, min, max) {
+  return Math.max(min, Math.min(max, x));
+}
+
+function jitter(amount) {
+  return (random() - 0.5) * amount;
+}
+
+function simulateData() {
+  const separation = Number(document.getElementById("separation").value);
+  const sd = Number(document.getElementById("sd").value);
+
+  const noDiseaseMean = 50 - separation / 2;
+  const diseaseMean = 50 + separation / 2;
+
+  data = [];
+
+  for (let i = 0; i < nPerGroup; i++) {
+    data.push({
+      id: "N" + (i + 1),
+      disease: 0,
+      group: "No disease",
+      testValue: clamp(normalRandom(noDiseaseMean, sd), 0, 100),
+      y: 0.85 + jitter(0.18)
+    });
+  }
+
+  for (let i = 0; i < nPerGroup; i++) {
+    data.push({
+      id: "D" + (i + 1),
+      disease: 1,
+      group: "Disease",
+      testValue: clamp(normalRandom(diseaseMean, sd), 0, 100),
+      y: 1.15 + jitter(0.18)
+    });
+  }
+}
+
+function classifyPoint(d, cutoff) {
+  const testPositive = d.testValue >= cutoff;
+
+  if (d.disease === 1 && testPositive) return "True positive";
+  if (d.disease === 1 && !testPositive) return "False negative";
+  if (d.disease === 0 && !testPositive) return "True negative";
+  if (d.disease === 0 && testPositive) return "False positive";
+}
+
+function calculateMetrics(cutoff) {
+  let tp = 0;
+  let fn = 0;
+  let tn = 0;
+  let fp = 0;
+
+  data.forEach(d => {
+    const classification = classifyPoint(d, cutoff);
+
+    if (classification === "True positive") tp++;
+    if (classification === "False negative") fn++;
+    if (classification === "True negative") tn++;
+    if (classification === "False positive") fp++;
+  });
+
+  const sensitivity = tp / (tp + fn);
+  const specificity = tn / (tn + fp);
+  const fpr = 1 - specificity;
+
+  return {
+    tp,
+    fn,
+    tn,
+    fp,
+    sensitivity,
+    specificity,
+    fpr
+  };
+}
+
+function getCurrentCutoff() {
+  return Number(document.getElementById("cutoff").value);
+}
+
+function colourForClassification(classification) {
+  if (classification === "True positive") return "#16a34a";
+  if (classification === "False negative") return "#f97316";
+  if (classification === "True negative") return "#2563eb";
+  if (classification === "False positive") return "#dc2626";
+  return "#6b7280";
+}
+
+function buildScaleDatasets(cutoff) {
+  const testNegative = data
+    .filter(d => d.testValue < cutoff)
+    .map(d => ({
+      x: d.testValue,
+      y: d.y,
+      classification: classifyPoint(d, cutoff),
+      group: d.group
+    }));
+
+  const testPositive = data
+    .filter(d => d.testValue >= cutoff)
+    .map(d => ({
+      x: d.testValue,
+      y: d.y,
+      classification: classifyPoint(d, cutoff),
+      group: d.group
+    }));
+
+  const maxY = 1.5;
+
+  return [
+    {
+      label: "Test negative",
+      data: testNegative,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      backgroundColor: testNegative.map(d => colourForClassification(d.classification))
+    },
+    {
+      label: "Test positive",
+      data: testPositive,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      backgroundColor: testPositive.map(d => colourForClassification(d.classification))
+    },
+    {
+      label: "Cutoff",
+      data: [
+        {x: cutoff, y: 0.55},
+        {x: cutoff, y: maxY}
+      ],
+      showLine: true,
+      pointRadius: 0,
+      borderWidth: 3,
+      borderDash: [7, 7],
+      borderColor: "#111827"
+    }
+  ];
+}
+
+function drawScaleChart() {
+  const cutoff = getCurrentCutoff();
+
+  if (scaleChart) scaleChart.destroy();
+
+  const ctx = document.getElementById("scaleChart").getContext("2d");
+
+  scaleChart = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: buildScaleDatasets(cutoff)
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      parsing: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const d = context.raw;
+              if (!d.classification) return "Cutoff";
+              return d.group + ", value = " + d.x.toFixed(1) + ", " + d.classification;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          min: 0,
+          max: 100,
+          title: {
+            display: true,
+            text: "Continuous diagnostic-test value"
+          }
+        },
+        y: {
+          min: 0.5,
+          max: 1.5,
+          ticks: {
+            callback: function(value) {
+              if (Math.abs(value - 0.85) < 0.04) return "No disease";
+              if (Math.abs(value - 1.15) < 0.04) return "Disease";
+              return "";
+            }
+          },
+          title: {
+            display: true,
+            text: "True disease status"
+          }
+        }
+      }
+    }
+  });
+}
+
+function updateScaleChartOnly() {
+  const cutoff = getCurrentCutoff();
+
+  scaleChart.data.datasets = buildScaleDatasets(cutoff);
+  scaleChart.update("none");
+}
+
+function getROCData() {
+  return selectedCutoffs
+    .map(cutoff => {
+      const m = calculateMetrics(cutoff);
+      return {
+        x: m.fpr,
+        y: m.sensitivity,
+        cutoff: cutoff,
+        sensitivity: m.sensitivity,
+        specificity: m.specificity
+      };
+    })
+    // Join ROC points in threshold order: strictest (highest) cutoff first.
+    // Sorting by FPR is ambiguous when multiple cutoffs produce the same FPR.
+    .sort((a, b) => b.cutoff - a.cutoff);
+}
+
+function drawROCChart() {
+  if (rocChart) rocChart.destroy();
+
+  const ctx = document.getElementById("rocChart").getContext("2d");
+
+  const currentMetrics = calculateMetrics(getCurrentCutoff());
+  const rocData = getROCData();
+
+  rocChart = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: [
+        {
+          label: "Selected cutoffs",
+          data: rocData,
+          showLine: true,
+          borderWidth: 2,
+          pointRadius: 6,
+          pointHoverRadius: 8,
+          tension: 0
+        },
+        {
+          label: "Current cutoff",
+          data: [{
+            x: currentMetrics.fpr,
+            y: currentMetrics.sensitivity
+          }],
+          pointRadius: 7,
+          pointHoverRadius: 9
+        },
+        {
+          label: "No discrimination",
+          data: [
+            {x: 0, y: 0},
+            {x: 1, y: 1}
+          ],
+          showLine: true,
+          pointRadius: 0,
+          borderWidth: 1,
+          borderDash: [5, 5]
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: {
+        legend: {
+          position: "bottom"
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const d = context.raw;
+              if (d.cutoff !== undefined) {
+                return "Cutoff " + d.cutoff.toFixed(1) +
+                  ": sensitivity " + d.sensitivity.toFixed(2) +
+                  ", specificity " + d.specificity.toFixed(2);
+              }
+              return "Current cutoff";
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          min: 0,
+          max: 1,
+          title: {
+            display: true,
+            text: "False positive rate = 1 - specificity"
+          }
+        },
+        y: {
+          min: 0,
+          max: 1,
+          title: {
+            display: true,
+            text: "Sensitivity"
+          }
+        }
+      }
+    }
+  });
+}
+
+function updateROCChartOnly() {
+  const currentMetrics = calculateMetrics(getCurrentCutoff());
+
+  rocChart.data.datasets[0].data = getROCData();
+  rocChart.data.datasets[1].data = [{
+    x: currentMetrics.fpr,
+    y: currentMetrics.sensitivity
+  }];
+
+  rocChart.update("none");
+}
+
+function updateLabelsAndStats() {
+  const cutoff = getCurrentCutoff();
+  const separation = Number(document.getElementById("separation").value);
+  const sd = Number(document.getElementById("sd").value);
+
+  const m = calculateMetrics(cutoff);
+
+  document.getElementById("cutoffValue").textContent = cutoff.toFixed(0);
+  document.getElementById("separationValue").textContent = separation.toFixed(0);
+  document.getElementById("sdValue").textContent = sd.toFixed(0);
+
+  document.getElementById("sensitivityBox").textContent = m.sensitivity.toFixed(2);
+  document.getElementById("specificityBox").textContent = m.specificity.toFixed(2);
+  document.getElementById("fprBox").textContent = m.fpr.toFixed(2);
+  document.getElementById("rocPointsBox").textContent = selectedCutoffs.length;
+}
+
+function updateCutoffTable() {
+  const tableBody = document.getElementById("cutoffTableBody");
+  tableBody.innerHTML = "";
+
+  selectedCutoffs
+    .slice()
+    .sort((a, b) => a - b)
+    .forEach(cutoff => {
+      const m = calculateMetrics(cutoff);
+
+      const row = document.createElement("tr");
+
+      row.innerHTML = `
+        <td>${cutoff.toFixed(0)}</td>
+        <td>${m.sensitivity.toFixed(2)}</td>
+        <td>${m.specificity.toFixed(2)}</td>
+        <td>${m.fpr.toFixed(2)}</td>
+      `;
+
+      tableBody.appendChild(row);
+    });
+}
+
+function updateAllForCutoffOnly() {
+  updateLabelsAndStats();
+  updateScaleChartOnly();
+  updateROCChartOnly();
+}
+
+function redrawEverything() {
+  updateLabelsAndStats();
+  drawScaleChart();
+  drawROCChart();
+  updateCutoffTable();
+}
+
+function addCurrentCutoff() {
+  const cutoff = getCurrentCutoff();
+
+  if (!selectedCutoffs.includes(cutoff)) {
+    selectedCutoffs.push(cutoff);
+  }
+
+  updateLabelsAndStats();
+  updateROCChartOnly();
+  updateCutoffTable();
+}
+
+function addManyCutoffs() {
+  selectedCutoffs = [];
+
+  for (let cutoff = 0; cutoff <= 100; cutoff += 5) {
+    selectedCutoffs.push(cutoff);
+  }
+
+  updateLabelsAndStats();
+  updateROCChartOnly();
+  updateCutoffTable();
+}
+
+function clearCutoffs() {
+  selectedCutoffs = [];
+
+  updateLabelsAndStats();
+  updateROCChartOnly();
+  updateCutoffTable();
+}
+
+function newData() {
+  seed = Math.floor(Math.random() * 1000000) + 1;
+  selectedCutoffs = [];
+  simulateData();
+  redrawEverything();
+}
+
+function changeDataGeneratingProcess() {
+  selectedCutoffs = [];
+  simulateData();
+  redrawEverything();
+}
+
+document.getElementById("cutoff").addEventListener("input", updateAllForCutoffOnly);
+
+document.getElementById("separation").addEventListener("input", changeDataGeneratingProcess);
+document.getElementById("sd").addEventListener("input", changeDataGeneratingProcess);
+
+document.getElementById("addCutoffButton").addEventListener("click", addCurrentCutoff);
+document.getElementById("addManyButton").addEventListener("click", addManyCutoffs);
+document.getElementById("clearCutoffsButton").addEventListener("click", clearCutoffs);
+document.getElementById("newDataButton").addEventListener("click", newData);
+
+simulateData();
+redrawEverything();
+</script>
+
+</body>
+</html>
