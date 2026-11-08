@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>ROC Curve Builder from Diagnostic Test Cutoffs</title>
+<title>Urinary NGAL for AKI after Cardiac Surgery: ROC Curve Builder</title>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -182,6 +182,34 @@
     margin-right: 6px;
   }
 
+  .scenario {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .scenario h3 {
+    margin: 0 0 6px;
+    font-size: 1rem;
+  }
+
+  .scenario p {
+    margin: 0 0 6px;
+  }
+
+  .scenario p:last-child {
+    margin-bottom: 0;
+  }
+
+  @media (max-width: 900px) {
+    .container, .two-col { grid-template-columns: 1fr; }
+    .stat-boxes { grid-template-columns: repeat(2, 1fr); }
+  }
+
   .tp { background: var(--green); }
   .fn { background: var(--orange); }
   .tn { background: var(--blue); }
@@ -192,36 +220,53 @@
 <body>
 
 <header>
-  <h1>Diagnostic test cutoff and ROC curve builder</h1>
-  <p>Move the cutoff, add cutoffs, and watch the ROC curve being generated.</p>
+  <h1>Urinary NGAL to detect acute kidney injury after cardiac surgery</h1>
+  <p>Move the NGAL cutoff, add cutoffs, and watch the ROC curve being generated.</p>
 </header>
 
 <div class="container">
 
   <aside class="panel">
 
+    <div class="scenario">
+      <h3>The clinical setting</h3>
+      <p>
+        200 adults have cardiac surgery with cardiopulmonary bypass. Urinary
+        neutrophil gelatinase-associated lipocalin (NGAL) is measured
+        2 hours after bypass, when serum creatinine has not yet risen.
+      </p>
+      <p>
+        The reference standard is acute kidney injury (AKI) by KDIGO
+        creatinine criteria within 72 hours. About 30% of patients
+        (60 of 200) develop AKI.
+      </p>
+      <p>
+        A patient is called test positive when NGAL is at or above the cutoff.
+      </p>
+    </div>
+
     <div class="control">
       <label for="cutoff">
-        Cutoff:
+        NGAL cutoff:
         <span id="cutoffValue" class="value"></span>
       </label>
-      <input type="range" id="cutoff" min="0" max="100" step="1" value="50">
+      <input type="range" id="cutoff" min="0" max="200" step="1" value="100">
     </div>
 
     <div class="control">
       <label for="separation">
-        Difference between groups:
+        Median NGAL in AKI patients:
         <span id="separationValue" class="value"></span>
       </label>
-      <input type="range" id="separation" min="5" max="45" step="1" value="25">
+      <input type="range" id="separation" min="40" max="400" step="5" value="120">
     </div>
 
     <div class="control">
       <label for="sd">
-        Within-group variability:
+        Within-group variability (SD of log NGAL):
         <span id="sdValue" class="value"></span>
       </label>
-      <input type="range" id="sd" min="5" max="25" step="1" value="15">
+      <input type="range" id="sd" min="0.3" max="1.4" step="0.05" value="0.8">
     </div>
 
     <button class="primary" id="addCutoffButton">Add this cutoff to ROC</button>
@@ -238,8 +283,17 @@
 
     <div class="note">
       <p>
-        The diagnostic values are fixed while you move the cutoff.
+        Patients without AKI have a median NGAL of 40 ng/mL. NGAL is
+        right-skewed, so values are simulated on the log scale and the
+        axis is logarithmic.
+      </p>
+      <p>
+        The NGAL values are fixed while you move the cutoff.
         Only the classification changes.
+      </p>
+      <p>
+        Published studies have often used cutoffs around 100&ndash;150 ng/mL.
+        These data are simulated for teaching, not taken from a real study.
       </p>
       <p>
         When you add a cutoff, its sensitivity and false positive rate are added as one point on the ROC plot.
@@ -251,7 +305,7 @@
   <main class="grid">
 
     <section class="panel">
-      <h2>Continuous diagnostic-test scale</h2>
+      <h2>Urinary NGAL 2 hours after bypass</h2>
       <canvas id="scaleChart"></canvas>
 
       <div class="stat-boxes">
@@ -286,7 +340,7 @@
         <table>
           <thead>
             <tr>
-              <th>Cutoff</th>
+              <th>Cutoff (ng/mL)</th>
               <th>Sensitivity</th>
               <th>Specificity</th>
               <th>FPR</th>
@@ -319,7 +373,19 @@ let data = [];
 let selectedCutoffs = [];
 let seed = 12345;
 
-const nPerGroup = 100;
+const nNoAKI = 140;
+const nAKI = 60;
+const medianNoAKI = 40;          // ng/mL
+const minNGAL = 5;               // ng/mL, axis and assay floor
+const maxNGAL = 2000;            // ng/mL, axis ceiling
+
+// The cutoff slider is log-spaced: position 0 -> 5 ng/mL, 100 -> 100 ng/mL, 200 -> 2000 ng/mL.
+function sliderToCutoff(p) {
+  const v = minNGAL * Math.pow(maxNGAL / minNGAL, p / 200);
+  if (v < 20) return Math.round(v);
+  if (v < 200) return Math.round(v / 5) * 5;
+  return Math.round(v / 10) * 10;
+}
 
 function random() {
   seed = (seed * 16807) % 2147483647;
@@ -349,27 +415,28 @@ function simulateData() {
   const separation = Number(document.getElementById("separation").value);
   const sd = Number(document.getElementById("sd").value);
 
-  const noDiseaseMean = 50 - separation / 2;
-  const diseaseMean = 50 + separation / 2;
+  // Log-normal NGAL: log(NGAL) ~ Normal(log(median), sd) in each group.
+  const logMeanNoAKI = Math.log(medianNoAKI);
+  const logMeanAKI = Math.log(separation);
 
   data = [];
 
-  for (let i = 0; i < nPerGroup; i++) {
+  for (let i = 0; i < nNoAKI; i++) {
     data.push({
       id: "N" + (i + 1),
       disease: 0,
-      group: "No disease",
-      testValue: clamp(normalRandom(noDiseaseMean, sd), 0, 100),
+      group: "No AKI",
+      testValue: clamp(Math.exp(normalRandom(logMeanNoAKI, sd)), minNGAL, maxNGAL * 0.9),
       y: 0.85 + jitter(0.18)
     });
   }
 
-  for (let i = 0; i < nPerGroup; i++) {
+  for (let i = 0; i < nAKI; i++) {
     data.push({
       id: "D" + (i + 1),
       disease: 1,
-      group: "Disease",
-      testValue: clamp(normalRandom(diseaseMean, sd), 0, 100),
+      group: "AKI",
+      testValue: clamp(Math.exp(normalRandom(logMeanAKI, sd)), minNGAL, maxNGAL * 0.9),
       y: 1.15 + jitter(0.18)
     });
   }
@@ -415,7 +482,7 @@ function calculateMetrics(cutoff) {
 }
 
 function getCurrentCutoff() {
-  return Number(document.getElementById("cutoff").value);
+  return sliderToCutoff(Number(document.getElementById("cutoff").value));
 }
 
 function colourForClassification(classification) {
@@ -502,19 +569,25 @@ function drawScaleChart() {
             label: function(context) {
               const d = context.raw;
               if (!d.classification) return "Cutoff";
-              return d.group + ", value = " + d.x.toFixed(1) + ", " + d.classification;
+              return d.group + ", NGAL = " + d.x.toFixed(0) + " ng/mL, " + d.classification;
             }
           }
         }
       },
       scales: {
         x: {
-          type: "linear",
-          min: 0,
-          max: 100,
+          type: "logarithmic",
+          min: minNGAL,
+          max: maxNGAL,
+          ticks: {
+            callback: function(value) {
+              const nice = [5, 10, 20, 50, 100, 200, 500, 1000, 2000];
+              return nice.includes(Math.round(value)) ? Math.round(value) : "";
+            }
+          },
           title: {
             display: true,
-            text: "Continuous diagnostic-test value"
+            text: "Urinary NGAL (ng/mL, log scale)"
           }
         },
         y: {
@@ -522,14 +595,14 @@ function drawScaleChart() {
           max: 1.5,
           ticks: {
             callback: function(value) {
-              if (Math.abs(value - 0.85) < 0.04) return "No disease";
-              if (Math.abs(value - 1.15) < 0.04) return "Disease";
+              if (Math.abs(value - 0.85) < 0.04) return "No AKI";
+              if (Math.abs(value - 1.15) < 0.04) return "AKI";
               return "";
             }
           },
           title: {
             display: true,
-            text: "True disease status"
+            text: "AKI within 72 h (KDIGO)"
           }
         }
       }
@@ -616,7 +689,7 @@ function drawROCChart() {
             label: function(context) {
               const d = context.raw;
               if (d.cutoff !== undefined) {
-                return "Cutoff " + d.cutoff.toFixed(1) +
+                return "Cutoff " + d.cutoff.toFixed(0) + " ng/mL" +
                   ": sensitivity " + d.sensitivity.toFixed(2) +
                   ", specificity " + d.specificity.toFixed(2);
               }
@@ -667,9 +740,9 @@ function updateLabelsAndStats() {
 
   const m = calculateMetrics(cutoff);
 
-  document.getElementById("cutoffValue").textContent = cutoff.toFixed(0);
-  document.getElementById("separationValue").textContent = separation.toFixed(0);
-  document.getElementById("sdValue").textContent = sd.toFixed(0);
+  document.getElementById("cutoffValue").textContent = "\u2265 " + cutoff.toFixed(0) + " ng/mL";
+  document.getElementById("separationValue").textContent = separation.toFixed(0) + " ng/mL";
+  document.getElementById("sdValue").textContent = sd.toFixed(2);
 
   document.getElementById("sensitivityBox").textContent = m.sensitivity.toFixed(2);
   document.getElementById("specificityBox").textContent = m.specificity.toFixed(2);
@@ -728,9 +801,10 @@ function addCurrentCutoff() {
 function addManyCutoffs() {
   selectedCutoffs = [];
 
-  for (let cutoff = 0; cutoff <= 100; cutoff += 5) {
+  [5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250,
+   300, 400, 500, 750, 1000, 1500, 2000].forEach(cutoff => {
     selectedCutoffs.push(cutoff);
-  }
+  });
 
   updateLabelsAndStats();
   updateROCChartOnly();
